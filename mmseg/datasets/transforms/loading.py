@@ -70,6 +70,7 @@ class LoadAnnotations(MMCV_LoadAnnotations):
         self,
         reduce_zero_label=None,
         backend_args=None,
+        flags='grayscale',
         imdecode_backend='pillow',
     ) -> None:
         super().__init__(
@@ -86,6 +87,7 @@ class LoadAnnotations(MMCV_LoadAnnotations):
                           'set `reduce_zero_label=True` when dataset '
                           'initialized')
         self.imdecode_backend = imdecode_backend
+        self.flags = flags
 
     def _load_seg_map(self, results: dict) -> None:
         """Private function to load semantic segmentation annotations.
@@ -100,7 +102,7 @@ class LoadAnnotations(MMCV_LoadAnnotations):
         img_bytes = fileio.get(
             results['seg_map_path'], backend_args=self.backend_args)
         gt_semantic_seg = mmcv.imfrombytes(
-            img_bytes, flag='unchanged',
+            img_bytes, flag=self.flags,
             backend=self.imdecode_backend).squeeze().astype(np.uint8)
 
         # reduce zero_label
