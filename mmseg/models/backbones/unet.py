@@ -8,80 +8,9 @@ from mmengine.model import BaseModule
 from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
 
 from mmseg.registry import MODELS
-from ..utils import UpConvBlock, Upsample
+from ..utils import UpConvBlock, Upsample, BasicConvBlock
 
 
-class BasicConvBlock(nn.Module):
-    """Basic convolutional block for UNet.
-
-    This module consists of several plain convolutional layers.
-
-    Args:
-        in_channels (int): Number of input channels.
-        out_channels (int): Number of output channels.
-        num_convs (int): Number of convolutional layers. Default: 2.
-        stride (int): Whether use stride convolution to downsample
-            the input feature map. If stride=2, it only uses stride convolution
-            in the first convolutional layer to downsample the input feature
-            map. Options are 1 or 2. Default: 1.
-        dilation (int): Whether use dilated convolution to expand the
-            receptive field. Set dilation rate of each convolutional layer and
-            the dilation rate of the first convolutional layer is always 1.
-            Default: 1.
-        with_cp (bool): Use checkpoint or not. Using checkpoint will save some
-            memory while slowing down the training speed. Default: False.
-        conv_cfg (dict | None): Config dict for convolution layer.
-            Default: None.
-        norm_cfg (dict | None): Config dict for normalization layer.
-            Default: dict(type='BN').
-        act_cfg (dict | None): Config dict for activation layer in ConvModule.
-            Default: dict(type='ReLU').
-        dcn (bool): Use deformable convolution in convolutional layer or not.
-            Default: None.
-        plugins (dict): plugins for convolutional layers. Default: None.
-    """
-
-    def __init__(self,
-                 in_channels,
-                 out_channels,
-                 num_convs=2,
-                 stride=1,
-                 dilation=1,
-                 with_cp=False,
-                 conv_cfg=None,
-                 norm_cfg=dict(type='BN'),
-                 act_cfg=dict(type='ReLU'),
-                 dcn=None,
-                 plugins=None):
-        super().__init__()
-        assert dcn is None, 'Not implemented yet.'
-        assert plugins is None, 'Not implemented yet.'
-
-        self.with_cp = with_cp
-        convs = []
-        for i in range(num_convs):
-            convs.append(
-                ConvModule(
-                    in_channels=in_channels if i == 0 else out_channels,
-                    out_channels=out_channels,
-                    kernel_size=3,
-                    stride=stride if i == 0 else 1,
-                    dilation=1 if i == 0 else dilation,
-                    padding=1 if i == 0 else dilation,
-                    conv_cfg=conv_cfg,
-                    norm_cfg=norm_cfg,
-                    act_cfg=act_cfg))
-
-        self.convs = nn.Sequential(*convs)
-
-    def forward(self, x):
-        """Forward function."""
-
-        if self.with_cp and x.requires_grad:
-            out = cp.checkpoint(self.convs, x)
-        else:
-            out = self.convs(x)
-        return out
 
 
 @MODELS.register_module()
@@ -284,15 +213,12 @@ class UNet(BaseModule):
                  num_stages=5,
                  strides=(1, 1, 1, 1, 1),
                  enc_num_convs=(2, 2, 2, 2, 2),
-                 dec_num_convs=(2, 2, 2, 2),
                  downsamples=(True, True, True, True),
                  enc_dilations=(1, 1, 1, 1, 1),
-                 dec_dilations=(1, 1, 1, 1),
                  with_cp=False,
                  conv_cfg=None,
                  norm_cfg=dict(type='BN'),
                  act_cfg=dict(type='ReLU'),
-                 upsample_cfg=dict(type='InterpConv'),
                  norm_eval=False,
                  dcn=None,
                  plugins=None,
@@ -331,11 +257,6 @@ class UNet(BaseModule):
             f'while the enc_num_convs is {enc_num_convs}, the length of '\
             f'enc_num_convs is {len(enc_num_convs)}, and the num_stages is '\
             f'{num_stages}.'
-        assert len(dec_num_convs) == (num_stages-1), \
-            'The length of dec_num_convs should be equal to (num_stages-1), '\
-            f'while the dec_num_convs is {dec_num_convs}, the length of '\
-            f'dec_num_convs is {len(dec_num_convs)}, and the num_stages is '\
-            f'{num_stages}.'
         assert len(downsamples) == (num_stages-1), \
             'The length of downsamples should be equal to (num_stages-1), '\
             f'while the downsamples is {downsamples}, the length of '\
@@ -346,11 +267,6 @@ class UNet(BaseModule):
             f'while the enc_dilations is {enc_dilations}, the length of '\
             f'enc_dilations is {len(enc_dilations)}, and the num_stages is '\
             f'{num_stages}.'
-        assert len(dec_dilations) == (num_stages-1), \
-            'The length of dec_dilations should be equal to (num_stages-1), '\
-            f'while the dec_dilations is {dec_dilations}, the length of '\
-            f'dec_dilations is {len(dec_dilations)}, and the num_stages is '\
-            f'{num_stages}.'
         self.num_stages = num_stages
         self.strides = strides
         self.downsamples = downsamples
@@ -358,30 +274,12 @@ class UNet(BaseModule):
         self.base_channels = base_channels
 
         self.encoder = nn.ModuleList()
-        self.decoder = nn.ModuleList()
 
         for i in range(num_stages):
             enc_conv_block = []
             if i != 0:
                 if strides[i] == 1 and downsamples[i - 1]:
                     enc_conv_block.append(nn.MaxPool2d(kernel_size=2))
-                upsample = (strides[i] != 1 or downsamples[i - 1])
-                self.decoder.append(
-                    UpConvBlock(
-                        conv_block=BasicConvBlock,
-                        in_channels=base_channels * 2**i,
-                        skip_channels=base_channels * 2**(i - 1),
-                        out_channels=base_channels * 2**(i - 1),
-                        num_convs=dec_num_convs[i - 1],
-                        stride=1,
-                        dilation=dec_dilations[i - 1],
-                        with_cp=with_cp,
-                        conv_cfg=conv_cfg,
-                        norm_cfg=norm_cfg,
-                        act_cfg=act_cfg,
-                        upsample_cfg=upsample_cfg if upsample else None,
-                        dcn=None,
-                        plugins=None))
 
             enc_conv_block.append(
                 BasicConvBlock(
@@ -405,12 +303,7 @@ class UNet(BaseModule):
         for enc in self.encoder:
             x = enc(x)
             enc_outs.append(x)
-        dec_outs = [x]
-        for i in reversed(range(len(self.decoder))):
-            x = self.decoder[i](enc_outs[i], x)
-            dec_outs.append(x)
-
-        return dec_outs
+        return enc_outs
 
     def train(self, mode=True):
         """Convert the model into training mode while keep normalization layer
