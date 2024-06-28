@@ -9,7 +9,7 @@ from mmengine.model import BaseModule
 
 @MODELS.register_module()
 class Unet3PlusNeck(BaseModule):
-    def __init__(self, in_channels=[64, 128, 256, 512, 1024], pretrained=None, init_cfg=None):
+    def __init__(self, in_channels=[1024, 512, 256, 128, 64], pretrained=None, init_cfg=None):
         super().__init__()
 
         self.pretrained = pretrained
